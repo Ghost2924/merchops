@@ -200,7 +200,6 @@ export default function NavBar() {
                       return '/dashboard';
                     }}
                     afterLeaveOrganizationUrl="/dashboard"
-                    routing="hash"
                     appearance={{
                       baseTheme: isDark ? dark : undefined,
                       elements: {
