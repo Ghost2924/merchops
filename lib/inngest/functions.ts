@@ -7,8 +7,11 @@ import { getDb } from '../db/turso';
  * Inngest function to run Teapplix order and inventory sync for a specific tenant.
  */
 export const syncTeapplix = inngest.createFunction(
-  { id: 'sync-teapplix', name: 'Sync Teapplix Orders & Inventory' },
-  { event: 'sync/teapplix.run' },
+  {
+    id: 'sync-teapplix',
+    name: 'Sync Teapplix Orders & Inventory',
+    triggers: { event: 'sync/teapplix.run' },
+  },
   async ({ event, step }) => {
     const { organization_id, mode = 'backfill', lookbackDays, targetDate } = event.data;
 
@@ -33,8 +36,11 @@ export const syncTeapplix = inngest.createFunction(
  * Inngest function to run Amazon Vendor Central ARA reports sync for a specific tenant.
  */
 export const syncAmazon = inngest.createFunction(
-  { id: 'sync-amazon', name: 'Sync Amazon Vendor ARA' },
-  { event: 'sync/amazon.run' },
+  {
+    id: 'sync-amazon',
+    name: 'Sync Amazon Vendor ARA',
+    triggers: { event: 'sync/amazon.run' },
+  },
   async ({ event, step }) => {
     const { organization_id } = event.data;
 
@@ -57,8 +63,11 @@ export const syncAmazon = inngest.createFunction(
  * for every active organization in the database every night (at 2:00 AM daily).
  */
 export const nightlySyncScheduler = inngest.createFunction(
-  { id: 'nightly-sync-scheduler', name: 'Nightly Sync Scheduler' },
-  { cron: '0 2 * * *' },
+  {
+    id: 'nightly-sync-scheduler',
+    name: 'Nightly Sync Scheduler',
+    triggers: { cron: '0 2 * * *' },
+  },
   async ({ step }) => {
     // Retrieve all active organization IDs from the database
     const orgIds = await step.run('get-all-organizations', async () => {

@@ -76,3 +76,48 @@ describe('SaaS Multi-Tenancy AsyncLocalStorage Context', () => {
     });
   });
 });
+
+describe('Org context database guard', () => {
+  const originalUrl = process.env.TURSO_DATABASE_URL;
+
+  beforeEach(() => {
+    delete (globalThis as { _client?: unknown })._client;
+    delete (globalThis as { _appliedVersion?: unknown })._appliedVersion;
+    delete (globalThis as { _migrationPromise?: unknown })._migrationPromise;
+    jest.resetModules();
+  });
+
+  beforeAll(() => {
+    process.env.TURSO_DATABASE_URL = 'file::memory:?cache=shared';
+    delete process.env.TURSO_AUTH_TOKEN;
+  });
+
+  afterAll(() => {
+    if (originalUrl) process.env.TURSO_DATABASE_URL = originalUrl;
+    else delete process.env.TURSO_DATABASE_URL;
+  });
+
+  test('tenant queries without orgId throw OrgContextRequiredError', async () => {
+    const { getDb } = await import('../db/turso');
+    const { runWithOrg: withOrg } = await import('../db/context');
+
+    await withOrg(null, false, async () => {
+      const db = getDb();
+      await expect(
+        db.execute('SELECT sku FROM inventory_products LIMIT 1')
+      ).rejects.toMatchObject({ name: 'OrgContextRequiredError' });
+    });
+  });
+
+  test('schema queries without orgId are allowed when bypass is false', async () => {
+    const { getDb } = await import('../db/turso');
+    const { runWithOrg: withOrg } = await import('../db/context');
+
+    await withOrg(null, false, async () => {
+      const db = getDb();
+      await expect(
+        db.execute('CREATE TABLE IF NOT EXISTS guard_test (id INTEGER PRIMARY KEY)')
+      ).resolves.toBeDefined();
+    });
+  });
+});

@@ -1,7 +1,11 @@
 export const dynamic = 'force-dynamic';
 
+import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb, migrate } from '@/lib/db/turso';
+import { getAmazonOAuthRedirectUri } from '@/lib/amazon/oauth';
+import { runWithOrg } from '@/lib/db/context';
+import { saveOrganizationCredentials } from '@/lib/db/queries';
+import { migrate } from '@/lib/db/turso';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
@@ -13,7 +17,7 @@ export async function GET(req: NextRequest) {
 
   const clientId = process.env.AMAZON_VENDOR_CLIENT_ID;
   const clientSecret = process.env.AMAZON_VENDOR_CLIENT_SECRET;
-  const redirectUri = 'https://teapplix-dashboard.vercel.app/api/auth/amazon/callback';
+  const redirectUri = getAmazonOAuthRedirectUri(req);
 
   if (!clientId || !clientSecret) {
     return NextResponse.json(
@@ -22,8 +26,12 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  const organizationId = searchParams.get('state') ?? auth().orgId;
+  if (!organizationId) {
+    return NextResponse.json({ error: 'Missing organization context' }, { status: 400 });
+  }
+
   try {
-    // Exchange auth code for tokens
     const tokenRes = await fetch('https://api.amazon.com/auth/o2/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -49,19 +57,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'No refresh_token in response' }, { status: 502 });
     }
 
-    // Persist to DB
     await migrate();
-    const db = getDb();
-    await db.execute({
-      sql: `INSERT INTO integrations (platform, refresh_token, updated_at)
-            VALUES ('amazon_vendor', ?, datetime('now'))
-            ON CONFLICT(platform) DO UPDATE SET
-              refresh_token = excluded.refresh_token,
-              updated_at    = datetime('now')`,
-      args: [refreshToken],
+    await runWithOrg(organizationId, false, async () => {
+      await saveOrganizationCredentials(
+        { amazon_refresh_token: refreshToken },
+        organizationId
+      );
     });
 
-    return NextResponse.redirect(new URL('/settings?amazon=success', req.nextUrl.origin));
+    return NextResponse.redirect(new URL('/settings/integrations?amazon=success', req.nextUrl.origin));
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('[amazon/callback] error:', message);

@@ -1,15 +1,28 @@
 import { Metadata } from 'next';
+import { getAppTitle } from '@/lib/config/app';
+import { resolveServerOrgId } from '@/lib/auth/serverOrg';
 import { getOrganizationCredentials } from '@/lib/db/queries';
 import IntegrationsForm from './IntegrationsForm';
 
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-  title: 'Integration Settings | BTEXPERT Operations Dashboard',
+  title: getAppTitle('Integration Settings'),
   description: 'Manage and configure secure credentials and API connections for Teapplix and Amazon SP-API.',
 };
 
 export default async function IntegrationsSettingsPage() {
+  const orgId = await resolveServerOrgId();
+  if (!orgId) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-surface">
+        <p className="text-sm text-gray-500 dark:text-text-secondary">
+          No active workspace. Select one from the header switcher.
+        </p>
+      </main>
+    );
+  }
+
   let hasTeapplixKey = false;
   let hasAmazonClientId = false;
   let hasAmazonClientSecret = false;

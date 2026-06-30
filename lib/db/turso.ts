@@ -1,7 +1,8 @@
 import { createClient } from '@libsql/client';
 import fs from 'fs';
 import path from 'path';
-import { getOrgContext } from './context';
+import { getOrgContext, orgContext, runWithOrg } from './context';
+import { OrgContextRequiredError } from './errors';
 
 const globalForTurso = globalThis as unknown as {
   _client?: ReturnType<typeof createClient>;
@@ -125,6 +126,44 @@ export function rewriteSql(sql: string, orgId: string): string {
   return rewritten;
 }
 
+function extractSql(stmt: unknown): string {
+  if (typeof stmt === 'string') return stmt;
+  if (stmt && typeof stmt === 'object' && typeof (stmt as { sql?: string }).sql === 'string') {
+    return (stmt as { sql: string }).sql;
+  }
+  return '';
+}
+
+function isSchemaStatement(sql: string): boolean {
+  return /^\s*(CREATE|ALTER|DROP|PRAGMA|REINDEX)\b/i.test(sql);
+}
+
+async function withResolvedOrgContext<T>(fn: () => T | Promise<T>): Promise<T> {
+  if (orgContext.getStore()) return fn();
+
+  const { orgId, bypass } = getOrgContext();
+  if (bypass) return fn();
+  if (orgId) return runWithOrg(orgId, false, fn);
+
+  const { resolveServerOrgId } = await import('@/lib/auth/serverOrg');
+  const resolved = await resolveServerOrgId();
+  if (!resolved) {
+    throw new OrgContextRequiredError();
+  }
+
+  return runWithOrg(resolved, false, fn);
+}
+
+function assertOrgContext(stmt: unknown): void {
+  const { orgId, bypass } = getOrgContext();
+  if (bypass || orgId) return;
+
+  const sql = extractSql(stmt);
+  if (sql && isSchemaStatement(sql)) return;
+
+  throw new OrgContextRequiredError();
+}
+
 function rewriteStatement(stmt: any, orgId: string): any {
   if (typeof stmt === 'string') {
     return rewriteSql(stmt, orgId);
@@ -143,20 +182,26 @@ function wrapTransaction(tx: any): any {
     get(target, prop, receiver) {
       if (prop === 'execute') {
         return async function (stmt: any) {
-          const { orgId, bypass } = getOrgContext();
-          if (orgId && !bypass) {
-            stmt = rewriteStatement(stmt, orgId);
-          }
-          return target.execute(stmt);
+          return withResolvedOrgContext(async () => {
+            assertOrgContext(stmt);
+            const { orgId, bypass } = getOrgContext();
+            if (orgId && !bypass) {
+              stmt = rewriteStatement(stmt, orgId);
+            }
+            return target.execute(stmt);
+          });
         };
       }
       if (prop === 'batch') {
         return async function (stmts: any[]) {
-          const { orgId, bypass } = getOrgContext();
-          if (orgId && !bypass) {
-            stmts = stmts.map((stmt) => rewriteStatement(stmt, orgId));
-          }
-          return target.batch(stmts);
+          return withResolvedOrgContext(async () => {
+            for (const stmt of stmts) assertOrgContext(stmt);
+            const { orgId, bypass } = getOrgContext();
+            if (orgId && !bypass) {
+              stmts = stmts.map((stmt) => rewriteStatement(stmt, orgId));
+            }
+            return target.batch(stmts);
+          });
         };
       }
       return Reflect.get(target, prop, receiver);
@@ -169,20 +214,26 @@ function wrapClient(client: any): any {
     get(target, prop, receiver) {
       if (prop === 'execute') {
         return async function (stmt: any) {
-          const { orgId, bypass } = getOrgContext();
-          if (orgId && !bypass) {
-            stmt = rewriteStatement(stmt, orgId);
-          }
-          return target.execute(stmt);
+          return withResolvedOrgContext(async () => {
+            assertOrgContext(stmt);
+            const { orgId, bypass } = getOrgContext();
+            if (orgId && !bypass) {
+              stmt = rewriteStatement(stmt, orgId);
+            }
+            return target.execute(stmt);
+          });
         };
       }
       if (prop === 'batch') {
         return async function (stmts: any[], mode?: any) {
-          const { orgId, bypass } = getOrgContext();
-          if (orgId && !bypass) {
-            stmts = stmts.map((stmt) => rewriteStatement(stmt, orgId));
-          }
-          return target.batch(stmts, mode);
+          return withResolvedOrgContext(async () => {
+            for (const stmt of stmts) assertOrgContext(stmt);
+            const { orgId, bypass } = getOrgContext();
+            if (orgId && !bypass) {
+              stmts = stmts.map((stmt) => rewriteStatement(stmt, orgId));
+            }
+            return target.batch(stmts, mode);
+          });
         };
       }
       if (prop === 'transaction') {
@@ -222,7 +273,8 @@ export async function migrate() {
   }
 
   if (!globalForTurso._migrationPromise) {
-    globalForTurso._migrationPromise = (async () => {
+    globalForTurso._migrationPromise = Promise.resolve(
+      runWithOrg(null, true, async () => {
       const db = getDb();
 
       try {
@@ -292,7 +344,8 @@ export async function migrate() {
         globalForTurso._migrationPromise = undefined;
         throw err;
       }
-    })();
+      })
+    );
   }
   return globalForTurso._migrationPromise;
 }

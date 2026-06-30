@@ -3,6 +3,7 @@ import { ThemeProvider } from 'next-themes';
 import NavBar from '@/components/NavBar';
 import { Inter } from 'next/font/google';
 import { ClerkProvider } from '@clerk/nextjs';
+import { getAppTitle } from '@/lib/config/app';
 import './globals.css';
 
 const inter = Inter({
@@ -11,7 +12,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'BTEXPERT Operations Dashboard',
+  title: getAppTitle(),
   description: 'Order and inventory intelligence',
 };
 

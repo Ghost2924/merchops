@@ -1,14 +1,15 @@
 export const dynamic = 'force-dynamic';
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { getAmazonOAuthRedirectUri } from '@/lib/amazon/oauth';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const applicationId = process.env.AMAZON_VENDOR_APPLICATION_ID;
   if (!applicationId) {
     return NextResponse.json({ error: 'Missing AMAZON_VENDOR_APPLICATION_ID' }, { status: 500 });
   }
 
-  const redirectUri = 'https://teapplix-dashboard.vercel.app/api/auth/amazon/callback';
+  const redirectUri = getAmazonOAuthRedirectUri(req);
 
   const params = new URLSearchParams({
     application_id: applicationId,
