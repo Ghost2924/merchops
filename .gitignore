@@ -23,3 +23,16 @@ yarn-error.log*
 tsconfig.tsbuildinfo
 .vercel
 .env*
+
+# CSV data files (local seed/source data — keep out of git)
+/*.csv
+/data/**/*.csv
+
+# Agent and Custom AI rule directories
+.agents/
+.clinerules/
+.cursor/
+.windsurf/
+.opencode/
+AGENTS.md
+skills-lock.json
