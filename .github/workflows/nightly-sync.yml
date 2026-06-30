@@ -1,0 +1,119 @@
+name: Order Sync
+
+on:
+  schedule:
+    - cron: '0 */3 * * *'   # Every 3 hours
+  push:
+    branches:
+      - main
+  workflow_dispatch:          # Allow manual trigger
+    inputs:
+      date:
+        description: 'Specific date to sync (YYYY-MM-DD). Leave blank to auto-sync yesterday + any gaps.'
+        required: false
+        default: ''
+      backfill_days:
+        description: 'Number of past days to check for gaps (default: 7)'
+        required: false
+        default: '7'
+      marketing_days:
+        description: 'Days of coupon/ad spend to sync (default: 30, max: 90). Use 90 for a full backfill.'
+        required: false
+        default: '30'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync orders (with gap backfill)
+        env:
+          APP_URL: ${{ secrets.VERCEL_APP_URL }}
+          INPUT_DATE: ${{ github.event.inputs.date }}
+          BACKFILL_DAYS: ${{ github.event.inputs.backfill_days || '7' }}
+        run: |
+          APP_URL="${APP_URL%$'\n'}"
+          APP_URL="${APP_URL%$'\r'}"
+
+          # If a specific date was provided via workflow_dispatch, sync only that date
+          if [ -n "$INPUT_DATE" ]; then
+            echo "Manual trigger: syncing specific date $INPUT_DATE"
+            RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}\n" \
+              -X POST "${APP_URL}/api/sync?date=${INPUT_DATE}" \
+              -H "Content-Type: application/json")
+            echo "$RESPONSE"
+            HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+            if [ "$HTTP_STATUS" != "200" ]; then
+              echo "ERROR: sync for $INPUT_DATE returned HTTP $HTTP_STATUS"
+              exit 1
+            fi
+          else
+            # Auto mode: sync yesterday + backfill any gaps in the last N days
+            echo "Auto mode: checking last ${BACKFILL_DAYS} days for gaps"
+            RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}\n" \
+              -X POST "${APP_URL}/api/sync?backfill=${BACKFILL_DAYS}" \
+              -H "Content-Type: application/json")
+            echo "$RESPONSE"
+            HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+            if [ "$HTTP_STATUS" != "200" ]; then
+              echo "ERROR: sync returned HTTP $HTTP_STATUS"
+              exit 1
+            fi
+          fi
+
+      - name: Sync current inventory quantities
+        env:
+          APP_URL: ${{ secrets.VERCEL_APP_URL }}
+        run: |
+          APP_URL="${APP_URL%$'\n'}"
+          APP_URL="${APP_URL%$'\r'}"
+          curl -s -w "\nHTTP_STATUS:%{http_code}\n" \
+            -X POST "${APP_URL}/api/inventory-sync" \
+            -H "Content-Type: application/json"
+
+      - name: Sync vendor ARA data (sales, margin, inventory health)
+        env:
+          APP_URL: ${{ secrets.VERCEL_APP_URL }}
+        run: |
+          APP_URL="${APP_URL%$'\n'}"
+          APP_URL="${APP_URL%$'\r'}"
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}\n" \
+            -X POST "${APP_URL}/api/vendor-sync" \
+            -H "Content-Type: application/json")
+          echo "$RESPONSE"
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "WARNING: vendor-sync returned HTTP $HTTP_STATUS (non-fatal)"
+          fi
+
+      - name: Sync marketing spend (ads + coupons)
+        env:
+          APP_URL: ${{ secrets.VERCEL_APP_URL }}
+        run: |
+          APP_URL="${APP_URL%$'\n'}"
+          APP_URL="${APP_URL%$'\r'}"
+          MARKETING_DAYS="${{ github.event.inputs.marketing_days || '30' }}"
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}\n" \
+            -X POST "${APP_URL}/api/marketing-sync?days=${MARKETING_DAYS}" \
+            -H "Content-Type: application/json")
+          echo "$RESPONSE"
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "WARNING: marketing-sync returned HTTP $HTTP_STATUS (non-fatal)"
+          fi
+
+      - name: Sync Amazon Ads spend (SP + SB reports → asin_ad_spend)
+        env:
+          APP_URL: ${{ secrets.VERCEL_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          APP_URL="${APP_URL%$'\n'}"
+          APP_URL="${APP_URL%$'\r'}"
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}\n" \
+            -X POST "${APP_URL}/api/ads-sync" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${CRON_SECRET}")
+          echo "$RESPONSE"
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "WARNING: ads-sync returned HTTP $HTTP_STATUS (non-fatal)"
+          fi

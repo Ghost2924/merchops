@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a0f;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e1e2e;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #6366f1;
+}
+
+/* Light mode scrollbar */
+.light ::-webkit-scrollbar-track {
+  background: #f9fafb;
+}
+.light ::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+}
+.light ::-webkit-scrollbar-thumb:hover {
+  background: #6366f1;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* @media print styles for Pick List printing */
+@media print {
+  html, body {
+    background: white !important;
+    color: black !important;
+  }
+  
+  /* Hide all dashboard UI elements */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Expose only the print container and its child contents */
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  
+  /* Make the print container fit the page width and print at the top left */
+  .print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    box-shadow: none !important;
+    border: none !important;
+    background: white !important;
+  }
+
+  .print-area table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 1.5rem;
+  }
+
+  .print-area th,
+  .print-area td {
+    border: 1px solid #000 !important;
+    padding: 10px 8px !important;
+    color: black !important;
+    background: transparent !important;
+    text-align: left;
+  }
+
+  .print-area th {
+    background-color: #f3f4f6 !important;
+    font-weight: bold;
+  }
+}
