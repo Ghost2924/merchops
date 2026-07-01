@@ -4,6 +4,7 @@ import NavBar from '@/components/NavBar';
 import { Inter } from 'next/font/google';
 import { ClerkProvider } from '@clerk/nextjs';
 import { getAppTitle } from '@/lib/config/app';
+import { Analytics } from '@vercel/analytics/next';
 import './globals.css';
 
 const inter = Inter({
@@ -44,6 +45,7 @@ export default function RootLayout({
             {children}
           </ThemeProvider>
         </ClerkProvider>
+        <Analytics />
       </body>
     </html>
   );
