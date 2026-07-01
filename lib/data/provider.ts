@@ -1,16 +1,18 @@
 import { DailySummary } from './types';
+import { getRecentSummaries, getTodaySummary } from '../db/queries';
 
 export interface DataProvider {
-  /**
-   * Returns daily summaries for the trailing `days` calendar days,
-   * sorted ascending by date. Returns fewer records if fewer are available.
-   */
   getRecentSummaries(days: number): Promise<DailySummary[]>;
-
-  /**
-   * Returns the summary for today's date, or null if not yet available.
-   */
   getTodaySummary(): Promise<DailySummary | null>;
+}
+
+class TursoDataProvider implements DataProvider {
+  async getRecentSummaries(days: number): Promise<DailySummary[]> {
+    return getRecentSummaries(days);
+  }
+  async getTodaySummary(): Promise<DailySummary | null> {
+    return getTodaySummary();
+  }
 }
 
 export function getDataProvider(): DataProvider {
@@ -18,7 +20,5 @@ export function getDataProvider(): DataProvider {
     const { MockDataProvider } = require('./mock');
     return new MockDataProvider();
   }
-  // Live: query Turso DB
-  const { TursoDataProvider } = require('./turso-provider');
   return new TursoDataProvider();
 }

@@ -6,15 +6,13 @@
  */
 
 import { revalidateTag } from 'next/cache';
-import { fetchOrdersByDate, fetchInventory, TeapplixOrder } from '@/lib/teapplix/live-client';
+import { fetchOrdersByDate, TeapplixOrder } from '@/lib/teapplix/live-client';
 import {
   upsertOrderLines,
   upsertInventoryAllocations,
   upsertOrders,
   upsertInventory,
   upsertInventorySnapshot,
-  normalizeSku,
-  InventoryRow,
   buildSyncLookups,
   recordUnmappedSku,
   insertMappingErrors,
@@ -24,6 +22,7 @@ import {
   getDateNDaysAgoInTz,
   clearRestockCaches,
 } from '@/lib/db/queries';
+import { fetchAndAggregateInventory } from './inventory';
 import { getDb } from '@/lib/db/turso';
 import { runWithOrg, getOrgContext } from '@/lib/db/context';
 
@@ -218,34 +217,7 @@ async function runSyncInternal(options: RunSyncOptions): Promise<SyncResult> {
   let inventorySkuCount = 0;
   if (options.mode === 'today') {
     try {
-      const products = await fetchInventory();
-      const aggregated = new Map<string, InventoryRow>();
-      for (const p of products) {
-        const sku = normalizeSku((p.ItemName as string) ?? '');
-        if (!sku) continue;
-        if (!aggregated.has(sku)) {
-          aggregated.set(sku, {
-            sku,
-            item_title: (p.ItemTitle as string) ?? '',
-            asin: (p.Asin as string) ?? '',
-            upc: (p.Upc as string) ?? '',
-            qty_on_hand: 0,
-            qty_to_ship: 0,
-            qty_available: 0,
-            unit_cost: Number(p.UnitCost) || 0,
-            last_synced: new Date().toISOString(),
-          });
-        }
-        const row = aggregated.get(sku)!;
-        row.qty_on_hand   += Number(p.QtyOnHand)   || 0;
-        row.qty_to_ship   += Number(p.QtyToShip)   || 0;
-        row.qty_available += Number(p.QtyAvailable) || 0;
-        if (!row.item_title && p.ItemTitle) row.item_title = p.ItemTitle as string;
-        if (!row.asin && p.Asin) row.asin = p.Asin as string;
-        if (!row.upc && p.Upc) row.upc = p.Upc as string;
-        if (!row.unit_cost && p.UnitCost) row.unit_cost = Number(p.UnitCost) || 0;
-      }
-      const invRows: InventoryRow[] = [...aggregated.values()];
+      const invRows = await fetchAndAggregateInventory();
       await upsertInventory(invRows);
       await upsertInventorySnapshot(invRows);
       inventorySkuCount = invRows.length;
