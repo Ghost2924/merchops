@@ -5,10 +5,8 @@ import { getFamilySku } from '../sku';
 import { parsePack, resolveBaseUnit, normalizeSku as resolverNormalizeSku } from '../sku/resolver';
 import { encrypt, decrypt } from '../crypto';
 
-// In-memory caches for restock plan calculations
+// In-memory cache for restock plan calculations
 let restockPlanCache: { data: any; timestamp: number } | null = null;
-/** @deprecated seasonal cache removed — unified planner replaces it */
-let seasonalRestockCache: { data: any; timestamp: number } | null = null;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 // Bust cache on module load (handles hot-reload / code changes)
@@ -16,7 +14,6 @@ restockPlanCache = null;
 
 export function clearRestockCaches() {
   restockPlanCache = null;
-  seasonalRestockCache = null;
 }
 
 
@@ -128,16 +125,6 @@ export function normalizeSku(raw: string): string {
     .replace(/\s+/g, ' ')        // collapse internal whitespace
     .trim();
 }
-
-/**
- * Legacy canonicalizeSku — kept for backward compat with old inventory-sync route.
- * New code should use normalizeSku() + the mapping table instead.
- * @deprecated
- */
-export function canonicalizeSku(raw: string): string {
-  return normalizeSku(raw);
-}
-
 
 // ---------------------------------------------------------------------------
 // Product Catalog — inventory_products
@@ -618,7 +605,6 @@ export interface IngestResult {
   allocationRows: AllocationRow[];
   unmappedSkus: string[];
   mappingErrors: string[];
-  // Legacy compat
   orderRows: OrderRow[];
 }
 

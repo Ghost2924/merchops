@@ -20,18 +20,13 @@
  * NOTE: ARA data lags ~4 days — not comparable to real-time Teapplix orders.
  */
 
+export const dynamic = 'force-dynamic';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, migrate } from '@/lib/db/turso';
 import { fetchAsinTitles } from '@/lib/spapi/catalog';
 import { normalizeSku, parsePack } from '@/lib/sku/resolver';
-
-export const dynamic = 'force-dynamic';
-
-function dateNDaysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
-}
+import { getDateNDaysAgoInTz } from '@/lib/db/queries';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -46,7 +41,7 @@ export async function GET(req: NextRequest) {
   // Fallback to today-4 on first load before any ARA data exists.
   //
   // We compute this below after the availResult query and reconstruct windows.
-  const fallbackEnd   = dateNDaysAgo(4);
+  const fallbackEnd = getDateNDaysAgoInTz(4);
 
   try {
     await migrate();

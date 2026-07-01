@@ -4,87 +4,21 @@
  * Fetches historical Amazon Ads SP reports in 30-day chunks and upserts
  * into asin_ad_spend + daily_marketing_spend.
  *
- * Body (JSON):
- *   startDate  — YYYY-MM-DD  (e.g. "2025-06-01")
- *   endDate    — YYYY-MM-DD  (e.g. "2026-06-24")
- *   chunkDays  — optional, default 30 (max Amazon allows per SP v3 report)
+ * Body: { startDate: "YYYY-MM-DD", endDate: "YYYY-MM-DD", chunkDays?: number }
+ * Auth: Bearer CRON_SECRET.
  *
- * The route runs each chunk sequentially to avoid hammering the Ads API.
- * A full year takes ~12 chunks × ~2 min each = up to 25 min, which exceeds
- * Vercel's 5-min lambda limit. Run locally (npm run dev + curl) or via a
- * long-running job. Progress is logged to console.
- *
- * Auth: Bearer CRON_SECRET (same as ads-sync).
+ * Note: a full year (~12 chunks × ~2 min each) exceeds Vercel's 5-min limit.
+ * Run locally (npm run dev + curl) or via a long-running job.
  */
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300; // max Vercel allows; real backfill needs local run
+export const maxDuration = 300;
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb, migrate } from '@/lib/db/turso';
-import { fetchAdsReport, AdsReportRow } from '@/lib/ads/client';
-
-// ---------------------------------------------------------------------------
-// Upsert helpers (duplicated from ads-sync to keep routes self-contained)
-// ---------------------------------------------------------------------------
-
-async function upsertAsinAdSpend(
-  db: ReturnType<typeof getDb>,
-  rows: AdsReportRow[],
-): Promise<number> {
-  const asinRows = rows.filter((r) => r.asin !== '__SB__');
-  if (asinRows.length === 0) return 0;
-  const BATCH = 100;
-  let upserted = 0;
-  for (let i = 0; i < asinRows.length; i += BATCH) {
-    const chunk = asinRows.slice(i, i + BATCH);
-    await db.batch(
-      chunk.map((r) => ({
-        sql: `INSERT INTO asin_ad_spend
-                (asin, report_date, ad_spend, ad_sales, impressions, clicks, acos, campaign_type, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-              ON CONFLICT(asin, report_date, campaign_type) DO UPDATE SET
-                ad_spend    = excluded.ad_spend,
-                ad_sales    = excluded.ad_sales,
-                impressions = excluded.impressions,
-                clicks      = excluded.clicks,
-                acos        = excluded.acos,
-                updated_at  = datetime('now')`,
-        args: [r.asin, r.reportDate, r.adSpend, r.adSales, r.impressions, r.clicks, r.acos, r.campaignType],
-      }))
-    );
-    upserted += chunk.length;
-  }
-  return upserted;
-}
-
-async function upsertDailyMarketingSpend(
-  db: ReturnType<typeof getDb>,
-  rows: AdsReportRow[],
-): Promise<number> {
-  const byDate = new Map<string, number>();
-  for (const r of rows) {
-    byDate.set(r.reportDate, (byDate.get(r.reportDate) ?? 0) + r.adSpend);
-  }
-  if (byDate.size === 0) return 0;
-  const entries = [...byDate.entries()];
-  await db.batch(
-    entries.map(([date, adSpend]) => ({
-      sql: `INSERT INTO daily_marketing_spend
-              (id, date, ad_spend, coupon_redemption_spend, marketplace, updated_at)
-            VALUES (?, ?, ?, 0, 'amazon_vendor', unixepoch())
-            ON CONFLICT(id) DO UPDATE SET
-              ad_spend   = excluded.ad_spend,
-              updated_at = unixepoch()`,
-      args: [`${date}|amazon_vendor`, date, adSpend],
-    }))
-  );
-  return entries.length;
-}
-
-// ---------------------------------------------------------------------------
-// Chunk helper
-// ---------------------------------------------------------------------------
+import { migrate } from '@/lib/db/turso';
+import { fetchAdsReport } from '@/lib/ads/client';
+import { upsertAsinAdSpend, upsertDailyMarketingSpend } from '@/lib/db/ads-queries';
+import { cronGuard } from '@/lib/auth/cronGuard';
 
 /** Split [startDate, endDate] into chunks of at most chunkDays days each. */
 function dateChunks(
@@ -108,20 +42,9 @@ function dateChunks(
   return chunks;
 }
 
-// ---------------------------------------------------------------------------
-// Route handler
-// ---------------------------------------------------------------------------
-
 export async function POST(req: NextRequest) {
-  // ── Auth ──────────────────────────────────────────────────────────────────
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = req.headers.get('authorization') ?? '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-    if (token !== cronSecret) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-  }
+  const deny = cronGuard(req);
+  if (deny) return deny;
 
   let body: { startDate?: string; endDate?: string; chunkDays?: number } = {};
   try {
@@ -135,26 +58,23 @@ export async function POST(req: NextRequest) {
   if (!startDate || !endDate) {
     return NextResponse.json(
       { error: 'startDate and endDate are required (YYYY-MM-DD)' },
-      { status: 400 }
+      { status: 400 },
     );
   }
-
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
     return NextResponse.json({ error: 'Dates must be YYYY-MM-DD' }, { status: 400 });
   }
-
   if (startDate > endDate) {
     return NextResponse.json({ error: 'startDate must be <= endDate' }, { status: 400 });
   }
 
   try {
     await migrate();
-    const db = getDb();
 
     const chunks = dateChunks(startDate, endDate, Math.min(chunkDays, 30));
     console.log(`[ads-backfill] ${chunks.length} chunks from ${startDate}→${endDate}`);
 
-    let totalAsinRows = 0;
+    let totalAsinRows   = 0;
     let totalDailyDates = 0;
     const chunkResults: Array<{ start: string; end: string; rows: number; error?: string }> = [];
 
@@ -166,15 +86,13 @@ export async function POST(req: NextRequest) {
 
         if (rows.length > 0) {
           const [asinUpserted, dailyUpserted] = await Promise.all([
-            upsertAsinAdSpend(db, rows),
-            upsertDailyMarketingSpend(db, rows),
+            upsertAsinAdSpend(rows),
+            upsertDailyMarketingSpend(rows),
           ]);
           totalAsinRows   += asinUpserted;
           totalDailyDates += dailyUpserted;
-          chunkResults.push({ start: chunk.start, end: chunk.end, rows: rows.length });
-        } else {
-          chunkResults.push({ start: chunk.start, end: chunk.end, rows: 0 });
         }
+        chunkResults.push({ start: chunk.start, end: chunk.end, rows: rows.length });
       } catch (chunkErr) {
         const msg = chunkErr instanceof Error ? chunkErr.message : String(chunkErr);
         console.error(`[ads-backfill] chunk ${chunk.start}→${chunk.end} failed:`, msg);
@@ -186,7 +104,7 @@ export async function POST(req: NextRequest) {
     console.log(`[ads-backfill] done. asinRows=${totalAsinRows} dailyDates=${totalDailyDates}`);
 
     return NextResponse.json({
-      ok:              true,
+      ok: true,
       startDate,
       endDate,
       chunks:          chunks.length,
